@@ -225,8 +225,8 @@ export default function AdminDashboard({ navigation }: Props) {
           </View>
           <Text style={styles.topBarTitle}>Attendance Admin</Text>
         </View>
-        <TouchableOpacity style={styles.notifBtn}>
-          <Text style={styles.notifIcon}>🔔</Text>
+        <TouchableOpacity onPress={handleLogout} style={{ paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.error, borderRadius: 6, marginRight: 10 }}>
+          <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.error }}>Logout</Text>
         </TouchableOpacity>
       </View>
 
@@ -494,8 +494,8 @@ function AdminSettings({ onBack }: { onBack: () => void }) {
         <Text style={styles.sectionTitle}>Geofence Settings</Text>
       </View>
       <Text style={styles.settingsSub}>Titik Koordinat Absensi</Text>
-      <TextInput style={styles.settingsInput} placeholder="Latitude" value={String(settings.coordLatitude)} onChangeText={v => setSettings({ ...settings, coordLatitude: parseFloat(v) || 0 })} keyboardType="numeric" />
-      <TextInput style={styles.settingsInput} placeholder="Longitude" value={String(settings.coordLongitude)} onChangeText={v => setSettings({ ...settings, coordLongitude: parseFloat(v) || 0 })} keyboardType="numeric" />
+      <TextInput style={styles.settingsInput} placeholder="Latitude" value={String(settings.coordLatitude === 0 ? 5.547596 : settings.coordLatitude)} onChangeText={v => setSettings({ ...settings, coordLatitude: parseFloat(v) || 0 })} keyboardType="numeric" />
+      <TextInput style={styles.settingsInput} placeholder="Longitude" value={String(settings.coordLongitude === 0 ? 95.318178 : settings.coordLongitude)} onChangeText={v => setSettings({ ...settings, coordLongitude: parseFloat(v) || 0 })} keyboardType="numeric" />
       <TextInput style={styles.settingsInput} placeholder="Radius (meter)" value={String(settings.coordRadius)} onChangeText={v => setSettings({ ...settings, coordRadius: parseInt(v) || 0 })} keyboardType="numeric" />
       <TouchableOpacity style={styles.saveBtn} onPress={handleSaveCoord}><Text style={styles.saveBtnText}>Simpan Koordinat</Text></TouchableOpacity>
       <Text style={[styles.settingsSub, { marginTop: 24 }]}>Data Admin</Text>

@@ -251,8 +251,8 @@ export default function UserDashboard({ navigation }: Props) {
           </View>
           <Text style={styles.topBarTitle}>Attendance</Text>
         </View>
-        <TouchableOpacity style={styles.notifBtn}>
-          <Text style={styles.notifIcon}>🔔</Text>
+        <TouchableOpacity onPress={handleLogout} style={{ paddingHorizontal: 12, paddingVertical: 6, borderWidth: 1, borderColor: COLORS.error, borderRadius: 6, marginRight: 10 }}>
+          <Text style={{ fontSize: 14, fontWeight: '600', color: COLORS.error }}>Logout</Text>
         </TouchableOpacity>
       </View>
 
@@ -715,8 +715,20 @@ const styles = StyleSheet.create({
   navLabelActive: { color: COLORS.onPrimaryContainer, fontWeight: '700' },
 
   // Camera
-  cameraContainer: { flex: 1, minHeight: 500, borderRadius: 14, overflow: 'hidden' },
-  camera: { flex: 1, minHeight: 500 },
+  cameraContainer: { 
+    flex: 1, 
+    width: '100%', 
+    height: 400, 
+    borderRadius: 14, 
+    overflow: 'hidden',
+    alignSelf: 'center',
+    marginBottom: 20
+  },
+  camera: { 
+    flex: 1, 
+    width: '100%',
+    aspectRatio: 3/4
+  },
   cameraOverlay: { flex: 1, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 48 },
   cameraBtn: { width: 72, height: 72, borderRadius: 36, backgroundColor: 'rgba(255,255,255,0.3)', justifyContent: 'center', alignItems: 'center', borderWidth: 4, borderColor: '#FFFFFF' },
   cameraBtnInner: { width: 60, height: 60, borderRadius: 30, backgroundColor: '#FFFFFF' },
