@@ -343,6 +343,7 @@ function ManageUsers({ onBack }: { onBack: () => void }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [editId, setEditId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   const loadUsers = useCallback(async () => {
     setUsers((await getUsers()).filter(u => u.role === 'karyawan'));
@@ -350,25 +351,45 @@ function ManageUsers({ onBack }: { onBack: () => void }) {
 
   useEffect(() => { loadUsers(); }, [loadUsers]);
 
+  const filteredUsers = users.filter(u =>
+    u.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+    u.email.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const showAlert = (title: string, msg: string) => {
+    if (Platform.OS === 'web') { window.alert(`${title}: ${msg}`); }
+    else { Alert.alert(title, msg); }
+  };
+
   const handleSave = async () => {
-    if (!name.trim() || !email.trim() || (!editId && !password.trim())) { Alert.alert('Error', 'Semua field harus diisi'); return; }
+    if (!name.trim() || !email.trim() || (!editId && !password.trim())) { showAlert('Error', 'Semua field harus diisi'); return; }
     try {
       if (editId) {
         await updateUser(editId, { name: name.trim(), email: email.trim(), ...(password.trim() ? { password: password.trim() } : {}) });
-        Alert.alert('Berhasil', 'Akun user diperbarui');
+        showAlert('Berhasil', 'Akun user diperbarui');
       } else {
         await addUser({ id: generateId(), name: name.trim(), email: email.trim(), password: password.trim(), role: 'karyawan', createdAt: new Date().toISOString() });
-        Alert.alert('Berhasil', 'Akun user dibuat');
+        showAlert('Berhasil', 'Akun user dibuat');
       }
       setModalVisible(false); resetForm(); loadUsers();
-    } catch { Alert.alert('Error', 'Gagal menyimpan user'); }
+    } catch { showAlert('Error', 'Gagal menyimpan user'); }
   };
 
   const handleDelete = (id: string) => {
-    Alert.alert('Hapus User', 'Yakin ingin menghapus?', [
-      { text: 'Batal', style: 'cancel' },
-      { text: 'Hapus', style: 'destructive', onPress: async () => { await deleteUser(id); loadUsers(); } },
-    ]);
+    const performDelete = async () => {
+      await deleteUser(id);
+      loadUsers();
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Yakin ingin menghapus user ini?')) {
+        performDelete();
+      }
+    } else {
+      Alert.alert('Hapus User', 'Yakin ingin menghapus?', [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Hapus', style: 'destructive', onPress: performDelete },
+      ]);
+    }
   };
 
   const resetForm = () => { setName(''); setEmail(''); setPassword(''); setEditId(null); };
@@ -382,7 +403,19 @@ function ManageUsers({ onBack }: { onBack: () => void }) {
       <TouchableOpacity style={styles.addBtn} onPress={() => { resetForm(); setModalVisible(true); }}>
         <Text style={styles.addBtnText}>+ Add Employee</Text>
       </TouchableOpacity>
-      {users.map(u => (
+      <TextInput
+        style={styles.searchInput}
+        placeholder="🔍  Cari nama atau email..."
+        placeholderTextColor={COLORS.onSurfaceVariant}
+        value={searchQuery}
+        onChangeText={setSearchQuery}
+        autoCapitalize="none"
+        clearButtonMode="while-editing"
+      />
+      {filteredUsers.length === 0 && searchQuery.length > 0 && (
+        <Text style={styles.emptyText}>Tidak ada karyawan yang cocok dengan "{searchQuery}"</Text>
+      )}
+      {filteredUsers.map(u => (
         <View key={u.id} style={styles.userCard}>
           <View style={styles.userInfo}>
             <Text style={styles.userName}>{u.name}</Text>
@@ -502,7 +535,7 @@ function AttendanceReport() {
                     <td>${new Date(r.timestamp).toLocaleTimeString('id-ID')}</td>
                     <td>${r.userName}</td>
                     <td>${r.type}</td>
-                    <td>${r.status || 'Tepat Waktu'}</td>
+                    <td>${r.type === 'Masuk' ? (new Date(r.timestamp).getHours() * 60 + new Date(r.timestamp).getMinutes() > 8 * 60 + 15 ? 'Terlambat' : 'Tepat Waktu') : '-'}</td>
                   </tr>
                   `).join('')}
                 </table>
@@ -817,8 +850,13 @@ const styles = StyleSheet.create({
   subScreen: { flex: 1 },
   subHeader: { flexDirection: 'row', alignItems: 'center', gap: 12, marginBottom: 16 },
   backBtn: { fontSize: 16, color: COLORS.primary, fontWeight: '600' },
-  addBtn: { backgroundColor: COLORS.primary, borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 16 },
+  addBtn: { backgroundColor: COLORS.primary, borderRadius: 10, padding: 14, alignItems: 'center', marginBottom: 12 },
   addBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 15 },
+  searchInput: {
+    height: 46, borderColor: COLORS.outlineVariant, borderWidth: 1, borderRadius: 10,
+    paddingHorizontal: 14, backgroundColor: COLORS.inputBg, fontSize: 15,
+    color: COLORS.onSurface, marginBottom: 12,
+  },
   userCard: {
     backgroundColor: COLORS.white, borderRadius: 12, padding: 14, marginBottom: 8,
     flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center',

@@ -42,12 +42,18 @@ export interface AppSettings {
   coordLatitude: number;
   coordLongitude: number;
   coordRadius: number;
+  startTime: string;
+  lateTime: string;
+  endTime: string;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
   coordLatitude: -6.2088,
   coordLongitude: 106.8456,
   coordRadius: 100,
+  startTime: '08:00',
+  lateTime: '08:15',
+  endTime: '17:00',
 };
 
 export type FilterPeriod = 'harian' | 'bulanan' | 'tahunan';

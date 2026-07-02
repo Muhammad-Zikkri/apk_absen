@@ -78,10 +78,16 @@ export default function UserDashboard({ navigation }: Props) {
 
   const getLocation = async () => {
     try {
-      const loc = await Location.requestForegroundPermissionsAsync();
-      if (loc.status === 'granted') {
-        const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
-        const coords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        setLocationName('Izin lokasi ditolak');
+        return;
+      }
+
+      // Langsung pakai posisi terakhir yang di-cache (instan, tanpa tunggu GPS)
+      const lastKnown = await Location.getLastKnownPositionAsync({});
+      if (lastKnown) {
+        const coords = { latitude: lastKnown.coords.latitude, longitude: lastKnown.coords.longitude };
         setCurrentLocation(coords);
         const settings = await getSettings();
         if (settings) {
@@ -89,16 +95,37 @@ export default function UserDashboard({ navigation }: Props) {
           setDistance(Math.round(dist));
           setInRange(dist <= settings.coordRadius);
         }
-        const geocode = await Location.reverseGeocodeAsync(coords);
-        if (geocode.length > 0) {
-          const addr = geocode[0];
-          setLocationName(`${addr.street || addr.district || ''}, ${addr.city || addr.subregion || ''}`.trim() || 'Lokasi terdeteksi');
-        }
+      }
+
+      // Update lokasi akurat di background (Balanced = cepat & hemat baterai)
+      const position = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.Balanced,
+      });
+      const coords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+      setCurrentLocation(coords);
+
+      // Jalankan paralel: hitung jarak + reverse geocode sekaligus
+      const [settings, geocode] = await Promise.all([
+        getSettings(),
+        Location.reverseGeocodeAsync(coords),
+      ]);
+
+      if (settings) {
+        const dist = calculateDistance(coords.latitude, coords.longitude, settings.coordLatitude, settings.coordLongitude);
+        setDistance(Math.round(dist));
+        setInRange(dist <= settings.coordRadius);
+      }
+      if (geocode.length > 0) {
+        const addr = geocode[0];
+        setLocationName(
+          `${addr.street || addr.district || ''}, ${addr.city || addr.subregion || ''}`.trim() || 'Lokasi terdeteksi'
+        );
       }
     } catch {
       setLocationName('Lokasi tidak tersedia');
     }
   };
+
 
   const loadTodayData = async () => {
     const user = await getCurrentUser();
