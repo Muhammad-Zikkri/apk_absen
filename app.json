@@ -10,6 +10,11 @@
       "android",
       "web"
     ],
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "ios": {
       "infoPlist": {
         "NSCameraUsageDescription": "Kamera digunakan untuk foto selfie absensi",
@@ -44,6 +49,7 @@
       "eas": {
         "projectId": "92936f86-7d49-40d5-9a0a-498d946c87b6"
       }
-    }
+    },
+    "owner": "muhammadzikkri"
   }
 }

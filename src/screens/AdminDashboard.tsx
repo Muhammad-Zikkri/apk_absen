@@ -11,11 +11,14 @@ import {
   SafeAreaView,
   StatusBar,
   Dimensions,
+  Platform,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { NativeStackNavigationProp } from '@react-navigation/native-stack';
 import { File, Paths } from 'expo-file-system';
 import * as Sharing from 'expo-sharing';
+import * as Print from 'expo-print';
+import * as Location from 'expo-location';
 import { User, AttendanceRecord, LeaveRequest, AppSettings, FilterPeriod } from '../utils/types';
 import {
   getUsers,
@@ -52,6 +55,9 @@ export default function AdminDashboard({ navigation }: Props) {
   const [recentActivity, setRecentActivity] = useState<AttendanceRecord[]>([]);
   const [chartData, setChartData] = useState<number[]>([0, 0, 0, 0, 0, 0, 0]);
 
+  const [officeName, setOfficeName] = useState('Memuat Lokasi...');
+  const [officeAddress, setOfficeAddress] = useState('Mengambil data koordinat...');
+
   useEffect(() => {
     getCurrentUser().then(u => { if (u) setAdminName(u.name); });
     loadDashboardData();
@@ -76,13 +82,53 @@ export default function AdminDashboard({ navigation }: Props) {
       weekData.push(records.filter(r => r.date === dateStr && r.type === 'Masuk').length);
     }
     setChartData(weekData);
+
+    // Get current office location from settings
+    try {
+      const settings = await getSettings();
+      if (settings) {
+        setOfficeName(`Kantor Utama (Radius: ${settings.coordRadius}m)`);
+        setOfficeAddress(`Lat: ${settings.coordLatitude.toFixed(6)}, Lng: ${settings.coordLongitude.toFixed(6)}`);
+        
+        // Reverse geocode office location
+        const locPermission = await Location.requestForegroundPermissionsAsync();
+        if (locPermission.status === 'granted') {
+          const geocode = await Location.reverseGeocodeAsync({
+            latitude: settings.coordLatitude,
+            longitude: settings.coordLongitude
+          });
+          if (geocode && geocode.length > 0) {
+            const addr = geocode[0];
+            const formattedAddr = `${addr.street || ''} ${addr.district || ''}, ${addr.city || addr.subregion || ''}`.trim();
+            if (formattedAddr) {
+              setOfficeAddress(formattedAddr);
+              if (addr.city || addr.subregion) {
+                setOfficeName(`Kantor ${addr.city || addr.subregion} (Radius: ${settings.coordRadius}m)`);
+              }
+            }
+          }
+        }
+      }
+    } catch (err) {
+      console.warn('Gagal memuat alamat kantor:', err);
+    }
   };
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Yakin ingin logout?', [
-      { text: 'Batal', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => { await logoutUser(); navigation.replace('Login'); } },
-    ]);
+    const performLogout = async () => {
+      await logoutUser();
+      navigation.replace('Login');
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Yakin ingin logout?')) {
+        performLogout();
+      }
+    } else {
+      Alert.alert('Logout', 'Yakin ingin logout?', [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: performLogout },
+      ]);
+    }
   };
 
   const maxChart = Math.max(...chartData, 1);
@@ -164,12 +210,12 @@ export default function AdminDashboard({ navigation }: Props) {
               onPress={() => setActiveTab('settings')}
             >
               <View style={styles.geofenceItemTop}>
-                <Text style={styles.geofenceItemName}>Jakarta Office</Text>
+                <Text style={styles.geofenceItemName}>{officeName}</Text>
                 <Text style={[styles.geofenceItemCount, { color: COLORS.secondary, backgroundColor: COLORS.secondary + '12' }]}>
                   {stats.hadir} Present
                 </Text>
               </View>
-              <Text style={styles.geofenceItemAddr}>HQ - Sudirman Central Business District</Text>
+              <Text style={styles.geofenceItemAddr}>{officeAddress}</Text>
             </TouchableOpacity>
           </View>
         </View>
@@ -195,7 +241,7 @@ export default function AdminDashboard({ navigation }: Props) {
                       </Text>
                     </View>
                     <View style={styles.timelineMeta}>
-                      <Text style={styles.timelineMetaText}>📍 Jakarta Office</Text>
+                      <Text style={styles.timelineMetaText}>📍 {officeName}</Text>
                     </View>
                   </View>
                 </View>
@@ -238,17 +284,26 @@ export default function AdminDashboard({ navigation }: Props) {
       >
         {activeTab === 'dashboard' && renderDashboard()}
         {activeTab === 'employees' && (
-          <ManageUsers onBack={() => setActiveTab('dashboard')} />
+          <ManageUsers onBack={() => { setActiveTab('dashboard'); loadDashboardData(); }} />
         )}
         {activeTab === 'reports' && (
-          <>
-            <AttendanceReport onBack={() => setActiveTab('dashboard')} />
-            <View style={{ height: 20 }} />
-            <ManageRequests onBack={() => setActiveTab('dashboard')} />
-          </>
+          <View style={styles.subScreen}>
+            <View style={styles.subHeader}>
+              <TouchableOpacity onPress={() => { setActiveTab('dashboard'); loadDashboardData(); }}>
+                <Text style={styles.backBtn}>← Kembali</Text>
+              </TouchableOpacity>
+              <Text style={styles.sectionTitle}>Laporan Kehadiran</Text>
+            </View>
+            <AttendanceReport />
+            
+            <View style={{ height: 1, backgroundColor: COLORS.outlineVariant, marginVertical: 24 }} />
+            
+            <Text style={[styles.sectionTitle, { marginBottom: 16 }]}>Permohonan Cuti & Izin</Text>
+            <ManageRequests />
+          </View>
         )}
         {activeTab === 'settings' && (
-          <AdminSettings onBack={() => setActiveTab('dashboard')} />
+          <AdminSettings onBack={() => { setActiveTab('dashboard'); loadDashboardData(); }} />
         )}
       </ScrollView>
 
@@ -263,7 +318,12 @@ export default function AdminDashboard({ navigation }: Props) {
           <TouchableOpacity
             key={tab.key}
             style={[styles.navItem, activeTab === tab.key && styles.navItemActive]}
-            onPress={() => setActiveTab(tab.key)}
+            onPress={() => {
+              setActiveTab(tab.key);
+              if (tab.key === 'dashboard') {
+                loadDashboardData();
+              }
+            }}
           >
             <Text style={[styles.navIcon, activeTab === tab.key && styles.navIconActive]}>{tab.icon}</Text>
             <Text style={[styles.navLabel, activeTab === tab.key && styles.navLabelActive]}>{tab.label}</Text>
@@ -356,7 +416,7 @@ function ManageUsers({ onBack }: { onBack: () => void }) {
   );
 }
 
-function AttendanceReport({ onBack }: { onBack: () => void }) {
+function AttendanceReport() {
   const [records, setRecords] = useState<AttendanceRecord[]>([]);
   const [filtered, setFiltered] = useState<AttendanceRecord[]>([]);
   const [period, setPeriod] = useState<FilterPeriod>('harian');
@@ -377,11 +437,8 @@ function AttendanceReport({ onBack }: { onBack: () => void }) {
   const months = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
 
   return (
-    <View style={styles.subScreen}>
-      <View style={styles.subHeader}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.backBtn}>← Kembali</Text></TouchableOpacity>
-        <Text style={styles.sectionTitle}>Attendance Reports</Text>
-      </View>
+    <View style={{ flex: 1 }}>
+
       <View style={styles.filterRow}>
         {(['harian', 'bulanan', 'tahunan'] as FilterPeriod[]).map(p => (
           <TouchableOpacity key={p} style={[styles.filterBtn, period === p && styles.filterBtnActive]} onPress={() => setPeriod(p)}>
@@ -414,16 +471,57 @@ function AttendanceReport({ onBack }: { onBack: () => void }) {
       <View style={styles.exportRow}>
         <TouchableOpacity style={styles.exportBtn} onPress={async () => {
           if (filtered.length === 0) { Alert.alert('Info', 'Tidak ada data'); return; }
-          const csv = 'No,Tanggal,Jam,Nama User,Tipe,Latitude,Longitude\n' + filtered.map((r, i) => `${i + 1},${r.date},${new Date(r.timestamp).toLocaleTimeString('id-ID')},"${r.userName}",${r.type},${r.latitude},${r.longitude}`).join('\n');
-          const f = new File(Paths.document, `absensi_${getTodayDate()}.csv`);
-          await f.write(csv); await Sharing.shareAsync(f.uri, { mimeType: 'text/csv' });
-        }}><Text style={styles.exportBtnText}>📊 Export</Text></TouchableOpacity>
+          const htmlContent = `
+            <html>
+              <head>
+                <style>
+                  body { font-family: 'Helvetica'; padding: 20px; }
+                  h1 { text-align: center; color: #333; }
+                  table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+                  th, td { border: 1px solid #ddd; padding: 10px; text-align: left; }
+                  th { background-color: #2962FF; color: white; }
+                  tr:nth-child(even) { background-color: #f2f2f2; }
+                </style>
+              </head>
+              <body>
+                <h1>Laporan Kehadiran Karyawan</h1>
+                <p>Periode Cetak: ${formatDate(getTodayDate())}</p>
+                <table>
+                  <tr>
+                    <th>No</th>
+                    <th>Tanggal</th>
+                    <th>Jam</th>
+                    <th>Nama Karyawan</th>
+                    <th>Tipe</th>
+                    <th>Status</th>
+                  </tr>
+                  ${filtered.map((r, i) => `
+                  <tr>
+                    <td>${i + 1}</td>
+                    <td>${formatDate(r.date)}</td>
+                    <td>${new Date(r.timestamp).toLocaleTimeString('id-ID')}</td>
+                    <td>${r.userName}</td>
+                    <td>${r.type}</td>
+                    <td>${r.status || 'Tepat Waktu'}</td>
+                  </tr>
+                  `).join('')}
+                </table>
+              </body>
+            </html>
+          `;
+          try {
+            const { uri } = await Print.printToFileAsync({ html: htmlContent });
+            await Sharing.shareAsync(uri, { UTI: '.pdf', mimeType: 'application/pdf' });
+          } catch (e) {
+            Alert.alert('Error', 'Gagal mengekspor PDF');
+          }
+        }}><Text style={styles.exportBtnText}>📄 Ekspor PDF</Text></TouchableOpacity>
       </View>
     </View>
   );
 }
 
-function ManageRequests({ onBack }: { onBack: () => void }) {
+function ManageRequests() {
   const [requests, setRequests] = useState<LeaveRequest[]>([]);
   useEffect(() => { getLeaveRequests().then(r => setRequests(r.filter(x => x.status === 'pending'))); }, []);
 
@@ -434,11 +532,7 @@ function ManageRequests({ onBack }: { onBack: () => void }) {
   };
 
   return (
-    <View style={styles.subScreen}>
-      <View style={styles.subHeader}>
-        <TouchableOpacity onPress={onBack}><Text style={styles.backBtn}>← Kembali</Text></TouchableOpacity>
-        <Text style={styles.sectionTitle}>Leave Requests</Text>
-      </View>
+    <View style={{ flex: 1 }}>
       {requests.length === 0 ? (
         <Text style={styles.emptyText}>Tidak ada permintaan izin/sakit</Text>
       ) : requests.map(req => (
@@ -465,16 +559,100 @@ function ManageRequests({ onBack }: { onBack: () => void }) {
 }
 
 function AdminSettings({ onBack }: { onBack: () => void }) {
-  const [settings, setSettings] = useState<AppSettings>({ coordLatitude: 0, coordLongitude: 0, coordRadius: 100 });
+  const [latText, setLatText] = useState('');
+  const [lngText, setLngText] = useState('');
+  const [radiusText, setRadiusText] = useState('100');
+  const [startTimeText, setStartTimeText] = useState('08:00');
+  const [lateTimeText, setLateTimeText] = useState('08:15');
+  const [endTimeText, setEndTimeText] = useState('17:00');
   const [adminEmail, setAdminEmail] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
 
   useEffect(() => {
-    getSettings().then(s => { if (s) setSettings(s); });
+    getSettings().then(s => {
+      if (s) {
+        setLatText(String(s.coordLatitude));
+        setLngText(String(s.coordLongitude));
+        setRadiusText(String(s.coordRadius));
+        setStartTimeText(s.startTime || '08:00');
+        setLateTimeText(s.lateTime || '08:15');
+        setEndTimeText(s.endTime || '17:00');
+      } else {
+        setLatText('5.547596');
+        setLngText('95.318178');
+        setRadiusText('100');
+        setStartTimeText('08:00');
+        setLateTimeText('08:15');
+        setEndTimeText('17:00');
+      }
+    });
     getCurrentUser().then(u => { if (u) setAdminEmail(u.email); });
   }, []);
 
-  const handleSaveCoord = async () => { await saveSettings(settings); Alert.alert('Berhasil', 'Koordinat diperbarui'); };
+  const handleSaveCoord = async () => {
+    const lat = parseFloat(latText);
+    const lng = parseFloat(lngText);
+    const rad = parseInt(radiusText, 10);
+    if (isNaN(lat) || isNaN(lng) || isNaN(rad)) {
+      if (Platform.OS === 'web') {
+        window.alert('Input koordinat tidak valid');
+      } else {
+        Alert.alert('Error', 'Input koordinat tidak valid');
+      }
+      return;
+    }
+    const timeRegex = /^([0-1]?[0-9]|2[0-3]):[0-5][0-9]$/;
+    if (!timeRegex.test(startTimeText.trim()) || !timeRegex.test(lateTimeText.trim()) || !timeRegex.test(endTimeText.trim())) {
+      if (Platform.OS === 'web') {
+        window.alert('Format jam tidak valid (Gunakan format HH:MM)');
+      } else {
+        Alert.alert('Error', 'Format jam tidak valid (Gunakan format HH:MM)');
+      }
+      return;
+    }
+    await saveSettings({
+      coordLatitude: lat,
+      coordLongitude: lng,
+      coordRadius: rad,
+      startTime: startTimeText.trim(),
+      lateTime: lateTimeText.trim(),
+      endTime: endTimeText.trim(),
+    });
+    if (Platform.OS === 'web') {
+      window.alert('Settings diperbarui');
+    } else {
+      Alert.alert('Berhasil', 'Settings diperbarui');
+    }
+  };
+
+  const handleGetCurrentLocation = async () => {
+    try {
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        if (Platform.OS === 'web') {
+          window.alert('Izin akses lokasi ditolak');
+        } else {
+          Alert.alert('Izin Ditolak', 'Aplikasi membutuhkan izin lokasi untuk mengambil koordinat saat ini.');
+        }
+        return;
+      }
+      const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
+      setLatText(String(position.coords.latitude));
+      setLngText(String(position.coords.longitude));
+      if (Platform.OS === 'web') {
+        window.alert('Lokasi berhasil diambil!');
+      } else {
+        Alert.alert('Berhasil', 'Lokasi berhasil diambil!');
+      }
+    } catch (error) {
+      if (Platform.OS === 'web') {
+        window.alert('Gagal mengambil lokasi saat ini');
+      } else {
+        Alert.alert('Error', 'Gagal mengambil lokasi saat ini');
+      }
+    }
+  };
+
   const handleSaveAdmin = async () => {
     const u = await getCurrentUser();
     if (u) {
@@ -482,7 +660,11 @@ function AdminSettings({ onBack }: { onBack: () => void }) {
       if (adminEmail.trim()) updates.email = adminEmail.trim();
       if (adminPassword.trim()) updates.password = adminPassword.trim();
       await updateUser(u.id, updates);
-      Alert.alert('Berhasil', 'Data admin diperbarui');
+      if (Platform.OS === 'web') {
+        window.alert('Data admin diperbarui');
+      } else {
+        Alert.alert('Berhasil', 'Data admin diperbarui');
+      }
       setAdminPassword('');
     }
   };
@@ -494,10 +676,34 @@ function AdminSettings({ onBack }: { onBack: () => void }) {
         <Text style={styles.sectionTitle}>Geofence Settings</Text>
       </View>
       <Text style={styles.settingsSub}>Titik Koordinat Absensi</Text>
-      <TextInput style={styles.settingsInput} placeholder="Latitude" value={String(settings.coordLatitude || 5.547596)} onChangeText={v => setSettings({ ...settings, coordLatitude: parseFloat(v) || 0 })} keyboardType="numeric" />
-      <TextInput style={styles.settingsInput} placeholder="Longitude" value={String(settings.coordLongitude || 95.318178)} onChangeText={v => setSettings({ ...settings, coordLongitude: parseFloat(v) || 0 })} keyboardType="numeric" />
-      <TextInput style={styles.settingsInput} placeholder="Radius (meter)" value={String(settings.coordRadius)} onChangeText={v => setSettings({ ...settings, coordRadius: parseInt(v) || 0 })} keyboardType="numeric" />
-      <TouchableOpacity style={styles.saveBtn} onPress={handleSaveCoord}><Text style={styles.saveBtnText}>Simpan Koordinat</Text></TouchableOpacity>
+      <TextInput style={styles.settingsInput} placeholder="Latitude" value={latText} onChangeText={setLatText} keyboardType="numeric" />
+      <TextInput style={styles.settingsInput} placeholder="Longitude" value={lngText} onChangeText={setLngText} keyboardType="numeric" />
+      <TextInput style={styles.settingsInput} placeholder="Radius (meter)" value={radiusText} onChangeText={setRadiusText} keyboardType="numeric" />
+      
+      <TouchableOpacity style={[styles.saveBtn, { backgroundColor: COLORS.secondary, marginBottom: 12 }]} onPress={handleGetCurrentLocation}>
+        <Text style={styles.saveBtnText}>📍 Dapatkan Lokasi Saya Sekarang</Text>
+      </TouchableOpacity>
+
+      <Text style={styles.settingsSub}>Jam Operasional Absensi</Text>
+      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, color: COLORS.onSurfaceVariant, marginBottom: 4, fontWeight: '500' }}>Jam Mulai Absen</Text>
+          <TextInput style={styles.settingsInput} placeholder="Contoh 08:00" value={startTimeText} onChangeText={setStartTimeText} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, color: COLORS.onSurfaceVariant, marginBottom: 4, fontWeight: '500' }}>Batas Jam Terlambat</Text>
+          <TextInput style={styles.settingsInput} placeholder="Contoh 08:15" value={lateTimeText} onChangeText={setLateTimeText} />
+        </View>
+      </View>
+      <View style={{ flexDirection: 'row', gap: 12, marginBottom: 8 }}>
+        <View style={{ flex: 1 }}>
+          <Text style={{ fontSize: 13, color: COLORS.onSurfaceVariant, marginBottom: 4, fontWeight: '500' }}>Jam Pulang</Text>
+          <TextInput style={styles.settingsInput} placeholder="Contoh 17:00" value={endTimeText} onChangeText={setEndTimeText} />
+        </View>
+      </View>
+
+      <TouchableOpacity style={styles.saveBtn} onPress={handleSaveCoord}><Text style={styles.saveBtnText}>Simpan Settings</Text></TouchableOpacity>
+      
       <Text style={[styles.settingsSub, { marginTop: 24 }]}>Data Admin</Text>
       <TextInput style={styles.settingsInput} placeholder="Email baru" value={adminEmail} onChangeText={setAdminEmail} keyboardType="email-address" autoCapitalize="none" />
       <TextInput style={styles.settingsInput} placeholder="Password baru" value={adminPassword} onChangeText={setAdminPassword} secureTextEntry />
@@ -661,8 +867,8 @@ const styles = StyleSheet.create({
   recordDate: { fontSize: 12, color: COLORS.outline },
   recordUser: { fontSize: 14, fontWeight: '500', color: COLORS.onSurface },
   recordCoords: { fontSize: 11, color: COLORS.outline, marginTop: 2 },
-  exportRow: { flexDirection: 'row', gap: 12, marginTop: 12 },
-  exportBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: COLORS.secondary, alignItems: 'center' },
+  exportRow: { flexDirection: 'row', marginTop: 12 },
+  exportBtn: { flex: 1, paddingVertical: 14, borderRadius: 10, backgroundColor: COLORS.secondary, alignItems: 'center', borderWidth: 0 },
   exportBtnText: { color: COLORS.white, fontWeight: '700', fontSize: 14 },
 
   // Requests

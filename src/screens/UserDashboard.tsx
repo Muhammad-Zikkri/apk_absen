@@ -57,6 +57,7 @@ export default function UserDashboard({ navigation }: Props) {
   const [inRange, setInRange] = useState(false);
   const [distance, setDistance] = useState(0);
   const [locationName, setLocationName] = useState('Mengambil lokasi...');
+  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
 
   useEffect(() => {
     getCurrentUser().then(u => { if (u) setUserName(u.name); });
@@ -81,6 +82,7 @@ export default function UserDashboard({ navigation }: Props) {
       if (loc.status === 'granted') {
         const position = await Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High });
         const coords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+        setCurrentLocation(coords);
         const settings = await getSettings();
         if (settings) {
           const dist = calculateDistance(coords.latitude, coords.longitude, settings.coordLatitude, settings.coordLongitude);
@@ -112,15 +114,37 @@ export default function UserDashboard({ navigation }: Props) {
     weekStart.setDate(weekStart.getDate() - weekStart.getDay());
     const weekStr = weekStart.toISOString().split('T')[0];
     const weekRecords = all.filter(r => r.date >= weekStr);
-    const hadir = weekRecords.filter(r => r.type === 'Masuk').length;
-    setWeeklySummary({ hadir, terlambat: 0, alpa: 0 });
+    const masukRecords = weekRecords.filter(r => r.type === 'Masuk');
+    const hadir = masukRecords.length;
+
+    const settings = await getSettings();
+    let terlambat = 0;
+    if (settings && settings.lateTime) {
+      terlambat = masukRecords.filter(r => {
+        const d = new Date(r.timestamp);
+        const t = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+        return t > settings.lateTime;
+      }).length;
+    }
+
+    setWeeklySummary({ hadir, terlambat, alpa: 0 });
   };
 
   const handleLogout = () => {
-    Alert.alert('Logout', 'Yakin ingin logout?', [
-      { text: 'Batal', style: 'cancel' },
-      { text: 'Logout', style: 'destructive', onPress: async () => { await logoutUser(); navigation.replace('Login'); } },
-    ]);
+    const performLogout = async () => {
+      await logoutUser();
+      navigation.replace('Login');
+    };
+    if (Platform.OS === 'web') {
+      if (window.confirm('Yakin ingin logout?')) {
+        performLogout();
+      }
+    } else {
+      Alert.alert('Logout', 'Yakin ingin logout?', [
+        { text: 'Batal', style: 'cancel' },
+        { text: 'Logout', style: 'destructive', onPress: performLogout },
+      ]);
+    }
   };
 
   const renderDashboard = () => (
@@ -158,6 +182,9 @@ export default function UserDashboard({ navigation }: Props) {
         <AttendanceButton
           todayAttendance={todayAttendance}
           onSuccess={loadTodayData}
+          currentLocation={currentLocation}
+          inRange={inRange}
+          distance={distance}
         />
         <Text style={styles.quickActionHint}>Tekan untuk melakukan absensi</Text>
       </View>
@@ -290,56 +317,69 @@ export default function UserDashboard({ navigation }: Props) {
   );
 }
 
-function AttendanceButton({ todayAttendance, onSuccess }: { todayAttendance: any; onSuccess: () => void }) {
+function AttendanceButton({ 
+  todayAttendance, 
+  onSuccess,
+  currentLocation,
+  inRange,
+  distance
+}: { 
+  todayAttendance: any; 
+  onSuccess: () => void;
+  currentLocation: { latitude: number; longitude: number } | null;
+  inRange: boolean;
+  distance: number;
+}) {
   const [permission, requestPermission] = useCameraPermissions();
   const [cameraVisible, setCameraVisible] = useState(false);
   const [facing, setFacing] = useState<'back' | 'front'>('front');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [currentLocation, setCurrentLocation] = useState<{ latitude: number; longitude: number } | null>(null);
-  const [inRange, setInRange] = useState(false);
-  const [distance, setDistance] = useState(0);
   const cameraRef = useRef<any>(null);
 
+  const nextAction = todayAttendance.pulang ? 'Masuk' : todayAttendance.masuk ? 'Pulang' : 'Masuk';
+
   useEffect(() => {
-    Location.requestForegroundPermissionsAsync().then(loc => {
-      if (loc.status === 'granted') {
-        Location.getCurrentPositionAsync({ accuracy: Location.Accuracy.High }).then(async position => {
-          const coords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-          setCurrentLocation(coords);
-          const settings = await getSettings();
-          if (settings) {
-            const dist = calculateDistance(coords.latitude, coords.longitude, settings.coordLatitude, settings.coordLongitude);
-            setDistance(Math.round(dist));
-            setInRange(dist <= settings.coordRadius);
-          }
-        }).catch(() => {});
-      }
-    });
+    // Location is now handled by the parent UserDashboard component
   }, []);
 
-  const takePhoto = async () => {
-    if (cameraRef.current) {
-      try {
-        const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
-        setPhotoUri(photo.uri);
-        setCameraVisible(false);
-      } catch { Alert.alert('Error', 'Gagal mengambil foto'); }
-    }
-  };
-
-  const handleAttendance = async (type: 'Masuk' | 'Pulang') => {
+  const handleAttendance = async (type: 'Masuk' | 'Pulang', capturedUri?: string) => {
+    const finalUri = capturedUri || photoUri;
     if (!currentLocation) { Alert.alert('Error', 'Lokasi belum tersedia'); return; }
     if (!inRange) { Alert.alert('Di Luar Jangkauan', `Anda berada ${distance}m dari titik absensi.`); return; }
-    if (!photoUri) { Alert.alert('Error', 'Ambil foto selfie terlebih dahulu'); return; }
+    if (!finalUri) { Alert.alert('Error', 'Ambil foto selfie terlebih dahulu'); return; }
     setLoading(true);
     try {
       const user = await getCurrentUser();
+      const settings = await getSettings();
       if (!user) { Alert.alert('Error', 'User tidak ditemukan'); return; }
-      const record: AttendanceRecord = {
+
+      const now = new Date();
+      const currentTimeStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+      let statusString = 'Tepat Waktu';
+
+      if (settings) {
+        if (type === 'Masuk' && settings.startTime && currentTimeStr < settings.startTime) {
+          Alert.alert('Belum Waktunya', `Jam mulai absen adalah ${settings.startTime}. Anda belum bisa absen masuk.`);
+          setLoading(false);
+          return;
+        }
+        if (type === 'Pulang' && settings.endTime && currentTimeStr < settings.endTime) {
+          Alert.alert('Belum Waktunya Pulang', `Jam pulang adalah ${settings.endTime}. Anda belum bisa absen pulang.`);
+          setLoading(false);
+          return;
+        }
+        if (type === 'Masuk' && settings.lateTime && currentTimeStr > settings.lateTime) {
+          statusString = 'Terlambat';
+          Alert.alert('Info', 'Anda tercatat terlambat.');
+        }
+      }
+
+      const record: AttendanceRecord & { status?: string } = {
         id: generateId(), userId: user.id, userName: user.name, type,
-        timestamp: new Date().toISOString(), date: getTodayDate(),
-        latitude: currentLocation.latitude, longitude: currentLocation.longitude, photoUri,
+        timestamp: now.toISOString(), date: getTodayDate(),
+        latitude: currentLocation.latitude, longitude: currentLocation.longitude, photoUri: finalUri,
+        status: statusString
       };
       await saveAttendanceRecord(record);
       Alert.alert('Berhasil', `Absensi ${type} berhasil`);
@@ -348,34 +388,48 @@ function AttendanceButton({ todayAttendance, onSuccess }: { todayAttendance: any
     } catch { Alert.alert('Error', 'Gagal menyimpan absensi'); } finally { setLoading(false); }
   };
 
+  const takePhoto = async () => {
+    if (cameraRef.current) {
+      try {
+        const photo = await cameraRef.current.takePictureAsync({ quality: 0.7 });
+        setPhotoUri(photo.uri);
+        setCameraVisible(false);
+        // Langsung auto-submit agar lebih cepat
+        handleAttendance(nextAction as 'Masuk' | 'Pulang', photo.uri);
+      } catch (err: any) { 
+        Alert.alert('Error', 'Gagal mengambil foto: ' + (err?.message || 'Unknown')); 
+      }
+    }
+  };
+
   if (cameraVisible) {
     return (
       <View style={styles.cameraContainer}>
-        <CameraView ref={cameraRef} style={styles.camera} facing={facing}>
-          <View style={styles.cameraOverlay}>
-            <TouchableOpacity style={styles.cameraBtn} onPress={takePhoto}>
-              <View style={styles.cameraBtnInner} />
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.flipBtn} onPress={() => setFacing(facing === 'front' ? 'back' : 'front')}>
-              <Text style={styles.flipBtnText}>🔄</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setCameraVisible(false)}>
-              <Text style={styles.cancelCameraText}>Batal</Text>
-            </TouchableOpacity>
-          </View>
-        </CameraView>
+        <CameraView ref={cameraRef} style={styles.camera} facing={facing} />
+        <View style={[StyleSheet.absoluteFill, styles.cameraOverlay]}>
+          <TouchableOpacity style={styles.cameraBtn} onPress={takePhoto}>
+            <View style={styles.cameraBtnInner} />
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.flipBtn} onPress={() => setFacing(facing === 'front' ? 'back' : 'front')}>
+            <Text style={styles.flipBtnText}>🔄</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.cancelCameraBtn} onPress={() => setCameraVisible(false)}>
+            <Text style={styles.cancelCameraText}>Batal</Text>
+          </TouchableOpacity>
+        </View>
       </View>
     );
   }
-
-  const nextAction = todayAttendance.pulang ? 'Masuk' : todayAttendance.masuk ? 'Pulang' : 'Masuk';
 
   return (
     <View style={styles.fingerprintWrap}>
       <TouchableOpacity
         style={styles.fingerprintOuter}
         onPress={async () => {
-          if (!permission?.granted) { await requestPermission(); }
+          if (!permission?.granted) { 
+            const req = await requestPermission(); 
+            if (!req.granted) return;
+          }
           setCameraVisible(true);
         }}
         activeOpacity={0.8}
